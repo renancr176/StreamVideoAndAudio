@@ -15,6 +15,30 @@ public static class StringExtensions
         return contentType;
     }
 
+    public static string NormalizeFileName(this string fileName)
+    {
+        // Not allowed character - Replacement
+        var notAllowedCharacters = new Dictionary<string, string>()
+        {
+            {"\\", "-"},
+            {"/", "-"},
+            {":", "-"},
+            {"*", ""},
+            {"?", ""},
+            {"\"", ""},
+            {"<", ""},
+            {">", ""},
+            {"|", ""},
+        };
+
+        foreach (var item in notAllowedCharacters)
+        {
+            fileName = fileName.Replace(item.Key, item.Value);
+        }
+
+        return fileName;
+    }
+
     public static string? FileToBase64(this string filePath)
     {
         if (File.Exists(filePath))
@@ -23,16 +47,5 @@ public static class StringExtensions
         }
 
         return null;
-    }
-
-    public static IEnumerable<String> SplitInParts(this string s, int partLength)
-    {
-        if (s == null)
-            throw new ArgumentNullException(nameof(s));
-        if (partLength <= 0)
-            throw new ArgumentException("Part length has to be positive.", nameof(partLength));
-
-        for (var i = 0; i < s.Length; i += partLength)
-            yield return s.Substring(i, Math.Min(partLength, s.Length - i));
     }
 }

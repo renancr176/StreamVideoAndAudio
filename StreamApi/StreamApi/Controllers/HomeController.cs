@@ -1,11 +1,9 @@
-﻿using Bogus;
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using StreamApi.Enums;
 using StreamApi.Extensions;
 using StreamApi.Models;
-using System.Collections.Generic;
-using System.Runtime.CompilerServices;
-using System.Threading.Channels;
+using StreamApi.Services;
+using Swashbuckle.AspNetCore.Annotations;
 
 namespace StreamApi.Controllers
 {
@@ -13,83 +11,107 @@ namespace StreamApi.Controllers
     [Route("[controller]")]
     public class HomeController : Controller
     {
-        private string MediaFolder => Path.GetFullPath($".{Path.DirectorySeparatorChar}Medias{Path.DirectorySeparatorChar}");
+        private readonly IMediaService _mediaService;
 
-        private FileModel GetMedia(MediaType mediaType)
+        public HomeController(IMediaService mediaService)
         {
-            var path = $"{MediaFolder}Videos";
-            switch (mediaType)
-            {
-                case MediaType.Audio:
-                    path = $"{MediaFolder}Audios";
-                    break;
-            }
-
-            var fileList = Directory.GetFiles(path);
-
-            if (fileList.Any())
-            {
-                var faker = new Faker();
-                var model = new FileModel();
-                model.Name = faker.Random.ArrayElement(fileList);
-                model.ContentType = model.Name.GetContentTypeFromFile();
-
-                return model;
-            }
-
-            return null;
-        }
-
-        private async Task WriteItemsAsync(
-            MediaType mediaType,
-            ChannelWriter<FileModel> writer,
-            CancellationToken cancellationToken)
-        {
-            Exception localException = null;
-            try
-            {
-                var file = GetMedia(MediaType.Video);
-
-                foreach (var mediaPart in file.Name.FileToBase64().SplitInParts(4000))
-                {
-                    await writer.WriteAsync(new FileModel()
-                    {
-                        Name = Path.GetFileName(file.Name),
-                        ContentType = file.ContentType,
-                        Base64Data = mediaPart
-                    }, cancellationToken);
-
-                    await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
-                }
-            }
-            catch (Exception ex)
-            {
-                localException = ex;
-            }
-            finally
-            {
-                writer.Complete(localException);
-            }
+            _mediaService = mediaService;
         }
 
         [HttpGet("Video")]
-        public async Task<ChannelReader<FileModel>> GetVideoAsync(CancellationToken cancellationToken)
+        [SwaggerResponse(200, Type = typeof(PlayListModel))]
+        [SwaggerResponse(204)]
+        public async Task<IActionResult> GetVideoAsync()
         {
-            var channel = Channel.CreateUnbounded<FileModel>();
+            var filePath = _mediaService.GetMedia(MediaTypeEnum.Video);
 
-            WriteItemsAsync(MediaType.Video, channel.Writer, cancellationToken);
+            if (filePath == null)
+                return NoContent();
 
-            return channel;
+            var processFolder = await _mediaService.GetFilesFolderToStreamAsync(MediaTypeEnum.Video, filePath);
+
+            if (processFolder == null || !System.IO.File.Exists($"{processFolder}{MediaService.ProcessFinishedControlFileName}"))
+                return NoContent();
+
+            var files = Directory.GetFiles(processFolder).ToList();
+
+            if (files.Any(file => file.EndsWith(".m3u8")))
+            {
+                var playListFile = files.First(file => file.EndsWith(".m3u8"));
+
+                return Ok(new PlayListModel()
+                {
+                    Name = Path.GetFileName(playListFile).Replace(Path.GetExtension(playListFile), "").Replace("_", " ").Trim(),
+                    File = new FileModel()
+                    {
+                        Name = Path.GetFileName(playListFile),
+                        ContentType = "application/x-mpegURL",
+                        Base64Data = playListFile.FileToBase64()
+                    },
+                    TsFiles = files.Where(filePath => filePath.EndsWith(".ts"))
+                        .OrderBy(filePath => filePath)
+                        .Select(filePath => filePath.Replace(MediaService.ProcessFolder, ""))
+                });
+            }
+
+            return NoContent();
         }
 
         [HttpGet("Audio")]
-        public async Task<ChannelReader<FileModel>> GetMusicsAsync(CancellationToken cancellationToken)
+        [SwaggerResponse(200, Type = typeof(PlayListModel))]
+        [SwaggerResponse(204)]
+        public async Task<IActionResult> GetMusicsAsync()
         {
-            var channel = Channel.CreateUnbounded<FileModel>();
+            var filePath = _mediaService.GetMedia(MediaTypeEnum.Audio);
 
-            WriteItemsAsync(MediaType.Audio, channel.Writer, cancellationToken);
+            if (filePath == null)
+                return NoContent();
 
-            return channel;
+            var processFolder = await _mediaService.GetFilesFolderToStreamAsync(MediaTypeEnum.Video, filePath);
+
+            if (processFolder == null || !System.IO.File.Exists($"{processFolder}{MediaService.ProcessFinishedControlFileName}"))
+                return NoContent();
+
+            var files = Directory.GetFiles(processFolder);
+
+            if (files.Any(file => file.EndsWith(".m3u8")))
+            {
+                var playListFile = files.First(file => file.EndsWith(".m3u8"));
+
+                return Ok(new PlayListModel()
+                {
+                    Name = Path.GetFileName(playListFile).Replace(Path.GetExtension(playListFile), "").Replace("_", " ").Trim(),
+                    File = new FileModel()
+                    {
+                        Name = Path.GetFileName(playListFile),
+                        ContentType = "application/x-mpegURL",
+                        Base64Data = playListFile.FileToBase64()
+                    },
+                    TsFiles = files.Where(filePath => filePath.EndsWith(".ts"))
+                        .OrderBy(filePath => filePath)
+                        .Select(filePath => filePath.Replace(MediaService.ProcessFolder, ""))
+                });
+            }
+
+            return NoContent();
+        }
+
+        [HttpGet("StreamFile")]
+        [SwaggerResponse(200, Type = typeof(FileModel))]
+        [SwaggerResponse(400)]
+        public async Task<IActionResult> GetStreamFile([FromQuery] string tsFile)
+        {
+            var filePath = $"{MediaService.ProcessFolder}{tsFile}";
+
+            if (!System.IO.File.Exists(filePath))
+                return BadRequest();
+
+            return Ok(new FileModel()
+            {
+                Name = Path.GetFileName(filePath),
+                ContentType = filePath.GetContentTypeFromFile(),
+                Base64Data = filePath.FileToBase64()
+            });
         }
     }
 }

@@ -1,6 +1,6 @@
 ﻿namespace StreamApi.Enums;
 
-public enum MediaType
+public enum MediaTypeEnum
 {
     Video,
     Audio
